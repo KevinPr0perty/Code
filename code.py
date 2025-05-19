@@ -23,23 +23,20 @@ if uploaded_file is not None:
         # Preserve original structure
         if "规格属性" in df.columns and "SKCID" in df.columns:
             # Fill only the specified columns without changing layout
-            df["款号编码"] = df["SKCID"].apply(lambda x: x[:2] if pd.notna(x) else "")
-            df["颜色编码"] = df["规格属性"].apply(lambda x: x.split("/")[0] if pd.notna(x) else "")
-            df["尺寸编码"] = df["规格属性"].apply(lambda x: x.split("/")[1] if pd.notna(x) else "")
-            df["图片编码"] = df["SKCID"].apply(lambda x: x.rsplit("-", 2)[0] if pd.notna(x) else "")
-            df["工艺类型"] = "白墨烫画"
+            for index, row in df.iterrows():
+                skcid = row["SKCID"]
+                spec = row["规格属性"]
+
+                sheet.cell(row=index+2, column=sheet.max_column + 1, value=skcid[:2])
+                sheet.cell(row=index+2, column=sheet.max_column + 2, value=spec.split("/")[0] if pd.notna(spec) else "")
+                sheet.cell(row=index+2, column=sheet.max_column + 3, value=spec.split("/")[1] if pd.notna(spec) else "")
+                sheet.cell(row=index+2, column=sheet.max_column + 4, value=skcid.rsplit("-", 2)[0])
+                sheet.cell(row=index+2, column=sheet.max_column + 5, value="白墨烫画")
 
             st.write("### Processed Spreadsheet (Same Format):")
             st.dataframe(df)
 
-            # Write back to the original Excel with styles preserved
-            for row_idx, row in enumerate(df.itertuples(index=False), start=2):
-                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.款号编码)
-                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.颜色编码)
-                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.尺寸编码)
-                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.图片编码)
-                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.工艺类型)
-
+            # Save processed spreadsheet with styles preserved
             buffer = io.BytesIO()
             workbook.save(buffer)
             buffer.seek(0)

@@ -1,6 +1,6 @@
-import openpyxl
 import streamlit as st
 import pandas as pd
+import openpyxl
 
 st.title("Spreadsheet Processor for Custom Columns")
 
@@ -12,7 +12,7 @@ if uploaded_file is not None:
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, engine='openpyxl')
 
     st.write("### Original Spreadsheet:")
     st.dataframe(df)

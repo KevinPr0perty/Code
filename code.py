@@ -22,16 +22,17 @@ if uploaded_file is not None:
 
         # Preserve original structure
         if "规格属性" in df.columns and "SKCID" in df.columns:
-            # Fill only the specified columns without changing layout
+            # Correctly update the specified columns
             for index, row in df.iterrows():
                 skcid = row["SKCID"]
                 spec = row["规格属性"]
 
-                sheet.cell(row=index+2, column=sheet.max_column + 1, value=skcid[:2])
-                sheet.cell(row=index+2, column=sheet.max_column + 2, value=spec.split("/")[0] if pd.notna(spec) else "")
-                sheet.cell(row=index+2, column=sheet.max_column + 3, value=spec.split("/")[1] if pd.notna(spec) else "")
-                sheet.cell(row=index+2, column=sheet.max_column + 4, value=skcid.rsplit("-", 2)[0])
-                sheet.cell(row=index+2, column=sheet.max_column + 5, value="白墨烫画")
+                # Directly update specified cells without adding new rows or columns
+                sheet[f"K{index+2}"] = skcid[:2]  # 款号编码
+                sheet[f"L{index+2}"] = spec.split("/")[0] if pd.notna(spec) else ""  # 颜色编码
+                sheet[f"M{index+2}"] = spec.split("/")[1] if pd.notna(spec) else ""  # 尺寸编码
+                sheet[f"N{index+2}"] = skcid.rsplit("-", 2)[0]  # 图片编码
+                sheet[f"O{index+2}"] = "白墨烫画"  # 工艺类型
 
             st.write("### Processed Spreadsheet (Same Format):")
             st.dataframe(df)

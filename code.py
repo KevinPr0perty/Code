@@ -14,9 +14,8 @@ if uploaded_file is not None:
     else:
         df = pd.read_excel(uploaded_file, engine='openpyxl')
 
-st.write("### Original Spreadsheet:")
+    st.write("### Original Spreadsheet:")
 
-try:
     if df is not None and not df.empty:
         st.dataframe(df)
 
@@ -47,5 +46,6 @@ try:
             st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")
     else:
         st.error("Uploaded spreadsheet is empty.")
+
 except Exception as e:
     st.error(f"An unexpected error occurred: {str(e)}")

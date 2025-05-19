@@ -29,12 +29,17 @@ if uploaded_file is not None:
         st.write("### Processed Spreadsheet:")
         st.dataframe(df)
 
-        # Download button
-        st.download_button(
-            "Download Processed Spreadsheet",
-            df.to_csv(index=False).encode('utf-8'),
-            "processed_spreadsheet.csv",
-            "text/csv"
-        )
+        # Download button - Maintaining Excel format
+        with pd.ExcelWriter(uploaded_file, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+
+        with open(uploaded_file.name, "rb") as file:
+            st.download_button(
+                "Download Processed Spreadsheet",
+                file.read(),
+                uploaded_file.name,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
     else:
         st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")

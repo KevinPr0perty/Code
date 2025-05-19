@@ -10,7 +10,11 @@ uploaded_file = st.file_uploader("Upload your spreadsheet", type=["xlsx", "xls"]
 
 if uploaded_file is not None:
     try:
-        # Load the file with original formatting
+        # Load the file with original formatting including styles
+        workbook = openpyxl.load_workbook(uploaded_file)
+        sheet = workbook.active
+
+        # Process the data using pandas
         df = pd.read_excel(uploaded_file, engine='openpyxl')
 
         st.write("### Original Spreadsheet:")
@@ -28,14 +32,21 @@ if uploaded_file is not None:
             st.write("### Processed Spreadsheet (Same Format):")
             st.dataframe(df)
 
-            # Download the processed file without changing the original
+            # Write back to the original Excel with styles preserved
+            for row_idx, row in enumerate(df.itertuples(index=False), start=2):
+                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.款号编码)
+                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.颜色编码)
+                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.尺寸编码)
+                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.图片编码)
+                sheet.cell(row=row_idx, column=sheet.max_column + 1, value=row.工艺类型)
+
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1')
+            workbook.save(buffer)
+            buffer.seek(0)
 
             st.download_button(
                 "Download Processed Spreadsheet",
-                buffer.getvalue(),
+                buffer,
                 "processed_spreadsheet.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )

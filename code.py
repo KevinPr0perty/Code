@@ -25,7 +25,7 @@ if uploaded_file is not None:
 
                 # 款号编码 logic
                 match = re.search(r"A\d", skcid)
-               款号编码 = match.group() if match else "A2"
+                款号编码 = match.group() if match else "A2"
 
                 # 颜色编码 and 尺寸编码
                 颜色编码 = spec.split("/")[0] if pd.notna(spec) else ""

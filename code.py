@@ -50,8 +50,7 @@ def split_color_size(spec):
         return "", ""
 
     s = str(spec).strip()
-
-    # Normalize dash variants in spec too (optional but helpful)
+    # Normalize dash variants
     s = re.sub(r"[–—－]", "-", s)
 
     if "/" in s:
@@ -81,26 +80,27 @@ def extract_image_code(source_id):
     """
     图片编码 FINAL (dash-safe):
 
-    1) A<digits>-<digits>...  -> return <digits> after dash
-       A8-2025001-B            -> 2025001
-       A2-20250703381-Navy-XL  -> 20250703381
+    1) A<digits>-<digits>...      -> return <digits> after dash
+       A8-2025001-B               -> 2025001
+       A2-20250703381-Navy-XL     -> 20250703381
 
-    2) A<digits>-<letters>... -> return A<digits>
-       A820250603048-B-Black-S -> A820250603048
-       (also works if dashes are unicode like – — －)
+    2) A<digits>-<letters>...     -> return A<digits>
+       A820250603048-B-Black-S    -> A820250603048
 
-    3) Otherwise -> return full string
-       A8250523149R            -> A8250523149R
+    3) <digits>-<anything>...     -> return <digits>
+       20250205010-White-L        -> 20250205010
+
+    4) Otherwise                  -> return full string
+       A8250523149R               -> A8250523149R
     """
     if source_id is None:
         return ""
 
     s = str(source_id).strip()
-
-    # ✅ Normalize ALL dash types to normal hyphen
+    # Normalize all dash types to normal hyphen
     s = re.sub(r"[–—－]", "-", s)
 
-    # Case 1: digits immediately after dash
+    # Case 1: A...-<digits>
     m1 = re.match(r"^A\d+-(\d+)", s)
     if m1:
         return m1.group(1)
@@ -110,7 +110,11 @@ def extract_image_code(source_id):
     if m2:
         return m2.group(1)
 
-    # Case 3: no dash → keep full string
+    # Case 3: <digits>-<anything>
+    m3 = re.match(r"^(\d+)[-_]", s)
+    if m3:
+        return m3.group(1)
+
     return s
 
 
@@ -169,7 +173,7 @@ if uploaded_file is not None:
         workbook.save(buffer)
         buffer.seek(0)
 
-        st.success("Processing complete — 图片编码 now handles unicode dashes correctly.")
+        st.success("Processing complete — 图片编码 now also handles leading-digit IDs.")
 
         st.download_button(
             "Download Processed Spreadsheet",

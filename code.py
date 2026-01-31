@@ -33,16 +33,10 @@ def is_nonempty(x):
 
 
 def pick_source(row, prefer_col, fallback_col):
-    """
-    Prefer prefer_col if non-empty; otherwise fallback_col.
-    Returns stripped string.
-    """
-    prefer_val = row.get(prefer_col) if prefer_col in row.index else None
-    if is_nonempty(prefer_val):
-        return str(prefer_val).strip()
-
-    fallback_val = row.get(fallback_col) if fallback_col in row.index else ""
-    return str(fallback_val).strip()
+    """Prefer prefer_col if non-empty; otherwise fallback_col. Returns stripped string."""
+    if prefer_col in row.index and is_nonempty(row.get(prefer_col)):
+        return str(row.get(prefer_col)).strip()
+    return str(row.get(fallback_col, "")).strip()
 
 
 def split_color_size(spec):
@@ -56,6 +50,10 @@ def split_color_size(spec):
         return "", ""
 
     s = str(spec).strip()
+
+    # Normalize dash variants in spec too (optional but helpful)
+    s = re.sub(r"[–—－]", "-", s)
+
     if "/" in s:
         c, s2 = s.split("/", 1)
         return c.strip(), s2.strip()
@@ -71,31 +69,48 @@ def extract_style_code(source_id):
     Examples:
       A2-20250703381-Navy-XL -> A2
       A8250523149R          -> A8
-      A8-2025001-B           -> A8
+      A8-2025001-B          -> A8
     """
-    s = str(source_id).strip()
+    s = "" if source_id is None else str(source_id).strip()
+    s = re.sub(r"[–—－]", "-", s)
     m = re.search(r"A(\d)", s)
     return f"A{m.group(1)}" if m else "A2"
 
 
 def extract_image_code(source_id):
     """
-    图片编码 rules (your latest):
-      - If matches A{digit(s)}-{digits}... -> return digits after first dash
-        A8-2025001       -> 2025001
-        A8-2025001-B     -> 2025001
-        A2-20250703381-...-> 20250703381
-      - Else (no dash pattern) -> return FULL original string
-        A8250523149R     -> A8250523149R
+    图片编码 FINAL (dash-safe):
+
+    1) A<digits>-<digits>...  -> return <digits> after dash
+       A8-2025001-B            -> 2025001
+       A2-20250703381-Navy-XL  -> 20250703381
+
+    2) A<digits>-<letters>... -> return A<digits>
+       A820250603048-B-Black-S -> A820250603048
+       (also works if dashes are unicode like – — －)
+
+    3) Otherwise -> return full string
+       A8250523149R            -> A8250523149R
     """
+    if source_id is None:
+        return ""
+
     s = str(source_id).strip()
 
-    # Digits right after first dash (most important rule)
-    m = re.match(r"^A\d+-(\d+)", s)
-    if m:
-        return m.group(1)
+    # ✅ Normalize ALL dash types to normal hyphen
+    s = re.sub(r"[–—－]", "-", s)
 
-    # Otherwise keep the full string (do NOT strip to digits)
+    # Case 1: digits immediately after dash
+    m1 = re.match(r"^A\d+-(\d+)", s)
+    if m1:
+        return m1.group(1)
+
+    # Case 2: A<digits>-<anything>
+    m2 = re.match(r"^(A\d+)-", s)
+    if m2:
+        return m2.group(1)
+
+    # Case 3: no dash → keep full string
     return s
 
 
@@ -103,7 +118,7 @@ def extract_image_code(source_id):
 
 if uploaded_file is not None:
     try:
-        # Load workbook for writing (keeps formatting better)
+        # Load workbook for writing (preserves formatting)
         workbook = openpyxl.load_workbook(uploaded_file)
         sheet = workbook.active
 
@@ -135,17 +150,12 @@ if uploaded_file is not None:
         col_proc  = header_map["*工艺类型"]
 
         for index, row in df.iterrows():
-            # 颜色/尺寸 from 规格属性
-            颜色编码, 尺寸编码 = split_color_size(row.get("规格属性"))
-
-            # ✅ Prefer 商家编码; if empty -> SKCID
+            # Prefer 商家编码, else SKCID
             source_id = pick_source(row, "商家编码", "SKCID")
 
-            # 款号编码 (A + one digit)
             款号编码 = extract_style_code(source_id)
-
-            # 图片编码 (your new rule)
             图片编码 = extract_image_code(source_id)
+            颜色编码, 尺寸编码 = split_color_size(row.get("规格属性"))
 
             excel_row = index + 2  # header row = 1
 
@@ -159,7 +169,7 @@ if uploaded_file is not None:
         workbook.save(buffer)
         buffer.seek(0)
 
-        st.success("Done — 图片编码 now keeps full 商家编码 unless it matches A?-<digits>…")
+        st.success("Processing complete — 图片编码 now handles unicode dashes correctly.")
 
         st.download_button(
             "Download Processed Spreadsheet",

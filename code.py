@@ -12,7 +12,7 @@ uploaded_file = st.file_uploader("Upload your spreadsheet", type=["xlsx", "xls"]
 # ---------- helpers ----------
 
 def get_header_map(ws, header_row=1):
-    """Map header text -> column index (1-based)"""
+    """Map header text -> column index (1-based)."""
     header_map = {}
     for cell in ws[header_row]:
         if cell.value is not None:
@@ -20,12 +20,21 @@ def get_header_map(ws, header_row=1):
     return header_map
 
 
+def is_nonempty(x):
+    """True if cell value is not NaN and not empty after strip."""
+    if x is None:
+        return False
+    if isinstance(x, float) and pd.isna(x):
+        return False
+    return str(x).strip() != ""
+
+
 def split_color_size(spec):
     """
     Supports:
       Red/XL
       Red-XL
-      Navy-Blue-XL  (splits on LAST dash)
+      Navy-Blue-XL (splits on LAST dash)
     """
     if spec is None or (isinstance(spec, float) and pd.isna(spec)):
         return "", ""
@@ -43,11 +52,9 @@ def split_color_size(spec):
 
 def extract_style_code(source_id):
     """
-    款号编码:
-      ONLY the first single digit after 'A'
-    Examples:
-      A2-20250703381-Navy-XL -> A2
-      A8250523149R          -> A8
+    款号编码: ONLY the first single digit after 'A'
+      A2-... -> A2
+      A8250... -> A8
     """
     m = re.search(r"A(\d)", source_id)
     return f"A{m.group(1)}" if m else "A2"
@@ -55,10 +62,14 @@ def extract_style_code(source_id):
 
 def extract_image_code(source_id):
     """
-    图片编码:
-      A2-20250703381-Navy-XL -> 20250703381
-      A8250523149R          -> 8250523149
+    图片编码 extraction:
+      - A2-20250703381-Navy-XL -> 20250703381
+      - Otherwise: first long digit sequence (>=6)
+      - Otherwise: before first '-' if present
+      - Otherwise: whole string
     """
+    source_id = str(source_id).strip()
+
     m = re.match(r"^A\d+-(\d+)", source_id)
     if m:
         return m.group(1)
@@ -77,7 +88,7 @@ def extract_image_code(source_id):
 
 if uploaded_file is not None:
     try:
-        # Load workbook for writing
+        # Load workbook for writing (keeps formatting better)
         workbook = openpyxl.load_workbook(uploaded_file)
         sheet = workbook.active
 
@@ -93,17 +104,10 @@ if uploaded_file is not None:
             st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")
             st.stop()
 
-        # Map headers in actual Excel file
-        header_map = get_header_map(sheet)
+        # Map headers in the real Excel file (prevents column shifting)
+        header_map = get_header_map(sheet, header_row=1)
 
-        target_headers = [
-            "*款号编码",
-            "*颜色编码",
-            "*尺寸编码",
-            "*图片编码",
-            "*工艺类型",
-        ]
-
+        target_headers = ["*款号编码", "*颜色编码", "*尺寸编码", "*图片编码", "*工艺类型"]
         missing = [h for h in target_headers if h not in header_map]
         if missing:
             st.error(f"Missing required target columns: {missing}")
@@ -115,22 +119,35 @@ if uploaded_file is not None:
         col_img   = header_map["*图片编码"]
         col_proc  = header_map["*工艺类型"]
 
+        has_merchant_col = "商家编码" in df.columns
+
         for index, row in df.iterrows():
             skcid = str(row.get("SKCID", "")).strip()
+            spec = row.get("规格属性")
 
-            # Use 商家编码 if present
-            source_id = skcid
-            if "商家编码" in df.columns:
-                merchant = row.get("商家编码")
-                if pd.notna(merchant) and str(merchant).strip():
-                    source_id = str(merchant).strip()
+            # ---------- 款号编码 source ----------
+            # If 商家编码 exists and non-empty, use it; else use SKCID
+            if has_merchant_col and is_nonempty(row.get("商家编码")):
+                style_source = str(row.get("商家编码")).strip()
+            else:
+                style_source = skcid
 
-            款号编码 = extract_style_code(source_id)
-            颜色编码, 尺寸编码 = split_color_size(row.get("规格属性"))
-            图片编码 = extract_image_code(source_id)
+            款号编码 = extract_style_code(style_source)
 
-            excel_row = index + 2  # header row = 1
+            # ---------- 颜色/尺寸 from 规格属性 ----------
+            颜色编码, 尺寸编码 = split_color_size(spec)
 
+            # ---------- 图片编码 source (YOUR REQUEST) ----------
+            # Try 商家编码 first; if empty -> straight use SKCID
+            if has_merchant_col and is_nonempty(row.get("商家编码")):
+                img_source = str(row.get("商家编码")).strip()
+            else:
+                img_source = skcid
+
+            图片编码 = extract_image_code(img_source)
+
+            # Write into Excel (row 2 corresponds to df index 0)
+            excel_row = index + 2
             sheet.cell(excel_row, col_style, 款号编码)
             sheet.cell(excel_row, col_color, 颜色编码)
             sheet.cell(excel_row, col_size,  尺寸编码)
@@ -141,7 +158,7 @@ if uploaded_file is not None:
         workbook.save(buffer)
         buffer.seek(0)
 
-        st.success("Processing complete — 款号编码 now only A + one digit.")
+        st.success("Done — 图片编码 now prefers 商家编码, otherwise falls back to SKCID.")
 
         st.download_button(
             "Download Processed Spreadsheet",

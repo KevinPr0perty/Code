@@ -8,76 +8,140 @@ st.title("Spreadsheet Processor for Custom Columns")
 
 uploaded_file = st.file_uploader("Upload your spreadsheet", type=["xlsx", "xls"])
 
+def get_header_map(ws, header_row=1):
+    """
+    Map header text -> column index (1-based)
+    """
+    header_map = {}
+    for cell in ws[header_row]:
+        val = cell.value
+        if val is not None:
+            header_map[str(val).strip()] = cell.col_idx
+    return header_map
+
+def split_color_size(spec):
+    """
+    Supports:
+      Red/XS
+      Red-XS
+      Navy-XL
+    Strategy:
+      - if '/' present: split on first '/'
+      - elif '-' present: split on last '-' (safer if color contains dashes)
+      - else: color=spec, size=""
+    """
+    if spec is None or (isinstance(spec, float) and pd.isna(spec)):
+        return "", ""
+    s = str(spec).strip()
+    if "/" in s:
+        parts = s.split("/", 1)
+        return parts[0].strip(), parts[1].strip()
+    if "-" in s:
+        left, right = s.rsplit("-", 1)
+        return left.strip(), right.strip()
+    return s, ""
+
+def extract_style_code(source_id):
+    """
+    款号编码: detect ANY number of digits after 'A'
+    Examples:
+      A2-20250703381-Navy-XL -> A2
+      A8250523149R          -> A8250523149
+    """
+    m = re.search(r"A\d+", source_id)
+    return m.group(0) if m else "A2"
+
+def extract_image_code(source_id):
+    """
+    图片编码:
+      - If starts with A + digits + '-' + digits -> take those digits after dash
+        A2-20250703381-Navy-XL -> 20250703381
+      - Else: try first long digit sequence (>=6)
+      - Else: if '-' exists -> take first token
+      - Else: whole string
+    """
+    m = re.match(r"^A\d+-(\d+)", source_id)
+    if m:
+        return m.group(1)
+
+    m2 = re.search(r"\d{6,}", source_id)
+    if m2:
+        return m2.group(0)
+
+    if "-" in source_id:
+        return source_id.split("-", 1)[0]
+
+    return source_id
+
 if uploaded_file is not None:
     try:
-        # Read workbook for writing cells (keeps original formatting as much as possible)
+        # Load workbook for writing (preserves formatting more than pandas)
         workbook = openpyxl.load_workbook(uploaded_file)
         sheet = workbook.active
 
-        # IMPORTANT: reset pointer before pandas reads, because openpyxl already consumed it
+        # Reset pointer for pandas read
         uploaded_file.seek(0)
         df = pd.read_excel(uploaded_file, engine="openpyxl")
 
         st.write("### Original Spreadsheet:")
         st.dataframe(df)
 
-        if "规格属性" in df.columns and "SKCID" in df.columns:
-            for index, row in df.iterrows():
-                skcid = str(row.get("SKCID", "")).strip()
-                spec = row.get("规格属性")
-
-                # ✅ If 商家编码 exists and is not empty, use it instead of SKCID for extraction
-                source_id = skcid
-                if "商家编码" in df.columns:
-                    merchant_code = row.get("商家编码")
-                    if pd.notna(merchant_code) and str(merchant_code).strip() != "":
-                        source_id = str(merchant_code).strip()
-
-                # ✅ 款号编码 logic: detect ANY number of digits after "A"
-                # Examples:
-                #   A2-20250703381-Navy-XL -> A2
-                #   A8250523149R          -> A8250523149
-                m_style = re.search(r"A\d+", source_id)
-                款号编码 = m_style.group() if m_style else "A2"
-
-                # 颜色编码 and 尺寸编码 (from 规格属性)
-                颜色编码 = spec.split("/")[0] if pd.notna(spec) else ""
-                尺寸编码 = spec.split("/")[1] if pd.notna(spec) and "/" in str(spec) else ""
-
-                # ✅ 图片编码 logic:
-                # Fix: A2-20250703381-Navy-XL -> 20250703381 (NOT XL)
-                m_img = re.match(r"^A\d+-(\d+)", source_id)
-                if m_img:
-                    图片编码 = m_img.group(1)
-                elif "-" in source_id:
-                    图片编码 = source_id.split("-")[0]
-                else:
-                    # If no dashes, try pulling the first long digit sequence; else use whole string
-                    m_digits = re.search(r"\d{6,}", source_id)
-                    图片编码 = m_digits.group() if m_digits else source_id
-
-                # Write into Excel (row 2 corresponds to index 0)
-                sheet[f"K{index+2}"] = 款号编码
-                sheet[f"L{index+2}"] = 颜色编码
-                sheet[f"M{index+2}"] = 尺寸编码
-                sheet[f"N{index+2}"] = 图片编码
-                sheet[f"O{index+2}"] = "白墨烫画"
-
-            st.write("### Processed Spreadsheet (Preview):")
-            st.dataframe(df)
-
-            buffer = io.BytesIO()
-            workbook.save(buffer)
-            buffer.seek(0)
-
-            st.download_button(
-                "Download Processed Spreadsheet",
-                buffer,
-                "processed_spreadsheet.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
+        # Basic required columns in dataframe
+        if "规格属性" not in df.columns or "SKCID" not in df.columns:
             st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")
+            st.stop()
+
+        # Build header->col mapping from the actual Excel sheet
+        header_map = get_header_map(sheet, header_row=1)
+
+        required_targets = ["*款号编码", "*颜色编码", "*尺寸编码", "*图片编码", "*工艺类型"]
+        missing_targets = [h for h in required_targets if h not in header_map]
+        if missing_targets:
+            st.error(f"Your sheet is missing these target columns: {missing_targets}")
+            st.stop()
+
+        # Column indices to write into
+        col_style = header_map["*款号编码"]
+        col_color = header_map["*颜色编码"]
+        col_size  = header_map["*尺寸编码"]
+        col_img   = header_map["*图片编码"]
+        col_proc  = header_map["*工艺类型"]
+
+        for index, row in df.iterrows():
+            skcid = str(row.get("SKCID", "")).strip()
+            spec = row.get("规格属性")
+
+            # ✅ If 商家编码 exists and non-empty, use it instead of SKCID
+            source_id = skcid
+            if "商家编码" in df.columns:
+                merchant_code = row.get("商家编码")
+                if pd.notna(merchant_code) and str(merchant_code).strip() != "":
+                    source_id = str(merchant_code).strip()
+
+            款号编码 = extract_style_code(source_id)
+            颜色编码, 尺寸编码 = split_color_size(spec)
+            图片编码 = extract_image_code(source_id)
+
+            excel_row = index + 2  # header is row 1
+
+            sheet.cell(row=excel_row, column=col_style, value=款号编码)
+            sheet.cell(row=excel_row, column=col_color, value=颜色编码)
+            sheet.cell(row=excel_row, column=col_size,  value=尺寸编码)
+            sheet.cell(row=excel_row, column=col_img,   value=图片编码)
+            sheet.cell(row=excel_row, column=col_proc,  value="白墨烫画")
+
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+
+        st.success("Done — columns filled by header names (no shifting).")
+
+        st.download_button(
+            "Download Processed Spreadsheet",
+            buffer,
+            "processed_spreadsheet.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")

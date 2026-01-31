@@ -33,23 +33,28 @@ if uploaded_file is not None:
                     if pd.notna(merchant_code) and str(merchant_code).strip() != "":
                         source_id = str(merchant_code).strip()
 
-                # 款号编码 logic (from source_id)
-                match = re.search(r"A\d", source_id)
-                款号编码 = match.group() if match else "A2"
+                # ✅ 款号编码 logic: detect ANY number of digits after "A"
+                # Examples:
+                #   A2-20250703381-Navy-XL -> A2
+                #   A8250523149R          -> A8250523149
+                m_style = re.search(r"A\d+", source_id)
+                款号编码 = m_style.group() if m_style else "A2"
 
                 # 颜色编码 and 尺寸编码 (from 规格属性)
                 颜色编码 = spec.split("/")[0] if pd.notna(spec) else ""
                 尺寸编码 = spec.split("/")[1] if pd.notna(spec) and "/" in str(spec) else ""
 
                 # ✅ 图片编码 logic:
-                # Fix: A2-20250703381-Navy-XL  -> 20250703381 (NOT XL)
-                m = re.match(r"^A\d-(\d+)", source_id)
-                if m:
-                    图片编码 = m.group(1)
+                # Fix: A2-20250703381-Navy-XL -> 20250703381 (NOT XL)
+                m_img = re.match(r"^A\d+-(\d+)", source_id)
+                if m_img:
+                    图片编码 = m_img.group(1)
                 elif "-" in source_id:
                     图片编码 = source_id.split("-")[0]
                 else:
-                    图片编码 = source_id
+                    # If no dashes, try pulling the first long digit sequence; else use whole string
+                    m_digits = re.search(r"\d{6,}", source_id)
+                    图片编码 = m_digits.group() if m_digits else source_id
 
                 # Write into Excel (row 2 corresponds to index 0)
                 sheet[f"K{index+2}"] = 款号编码

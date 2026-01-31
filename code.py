@@ -21,12 +21,29 @@ def get_header_map(ws, header_row=1):
 
 
 def is_nonempty(x):
-    """True if cell value is not NaN and not empty after strip."""
+    """True if value exists and isn't blank/NaN."""
     if x is None:
         return False
-    if isinstance(x, float) and pd.isna(x):
-        return False
+    try:
+        # pandas NaN
+        if pd.isna(x):
+            return False
+    except Exception:
+        pass
     return str(x).strip() != ""
+
+
+def pick_source(row, prefer_col, fallback_col):
+    """
+    Prefer prefer_col if non-empty; otherwise fallback_col.
+    Returns stripped string.
+    """
+    prefer_val = row.get(prefer_col) if prefer_col in row.index else None
+    if is_nonempty(prefer_val):
+        return str(prefer_val).strip()
+
+    fallback_val = row.get(fallback_col) if fallback_col in row.index else ""
+    return str(fallback_val).strip()
 
 
 def split_color_size(spec):
@@ -46,49 +63,51 @@ def split_color_size(spec):
     if "-" in s:
         c, s2 = s.rsplit("-", 1)
         return c.strip(), s2.strip()
-
     return s, ""
 
 
 def extract_style_code(source_id):
     """
-    款号编码: ONLY the first single digit after 'A'
-      A2-... -> A2
-      A8250... -> A8
+    款号编码: ONLY ONE digit after A
+    Examples:
+      A2-20250703381-Navy-XL -> A2
+      A8250523149R          -> A8
     """
-    m = re.search(r"A(\d)", source_id)
+    s = str(source_id).strip()
+    m = re.search(r"A(\d)", s)
     return f"A{m.group(1)}" if m else "A2"
 
 
 def extract_image_code(source_id):
     """
-    图片编码 extraction:
-      - A2-20250703381-Navy-XL -> 20250703381
-      - Otherwise: first long digit sequence (>=6)
-      - Otherwise: before first '-' if present
-      - Otherwise: whole string
+    图片编码:
+      A2-20250703381-Navy-XL -> 20250703381
+      A8250523149R          -> 8250523149
     """
-    source_id = str(source_id).strip()
+    s = str(source_id).strip()
 
-    m = re.match(r"^A\d+-(\d+)", source_id)
+    # A{digit(s)}-{digits}...
+    m = re.match(r"^A\d+-(\d+)", s)
     if m:
         return m.group(1)
 
-    m2 = re.search(r"\d{6,}", source_id)
+    # first long digit group
+    m2 = re.search(r"\d{6,}", s)
     if m2:
         return m2.group(0)
 
-    if "-" in source_id:
-        return source_id.split("-", 1)[0]
+    # fallback: before first dash
+    if "-" in s:
+        return s.split("-", 1)[0]
 
-    return source_id
+    return s
 
 
 # ---------- main ----------
 
 if uploaded_file is not None:
     try:
-        # Load workbook for writing (keeps formatting better)
+        # Load workbook for writing
         workbook = openpyxl.load_workbook(uploaded_file)
         sheet = workbook.active
 
@@ -104,7 +123,7 @@ if uploaded_file is not None:
             st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")
             st.stop()
 
-        # Map headers in the real Excel file (prevents column shifting)
+        # Map headers in the Excel sheet (prevents wrong column letters)
         header_map = get_header_map(sheet, header_row=1)
 
         target_headers = ["*款号编码", "*颜色编码", "*尺寸编码", "*图片编码", "*工艺类型"]
@@ -119,35 +138,20 @@ if uploaded_file is not None:
         col_img   = header_map["*图片编码"]
         col_proc  = header_map["*工艺类型"]
 
-        has_merchant_col = "商家编码" in df.columns
-
         for index, row in df.iterrows():
-            skcid = str(row.get("SKCID", "")).strip()
-            spec = row.get("规格属性")
+            # 颜色/尺寸 from 规格属性
+            颜色编码, 尺寸编码 = split_color_size(row.get("规格属性"))
 
-            # ---------- 款号编码 source ----------
-            # If 商家编码 exists and non-empty, use it; else use SKCID
-            if has_merchant_col and is_nonempty(row.get("商家编码")):
-                style_source = str(row.get("商家编码")).strip()
-            else:
-                style_source = skcid
-
+            # ✅ 款号编码 source: 商家编码 first, else SKCID
+            style_source = pick_source(row, "商家编码", "SKCID")
             款号编码 = extract_style_code(style_source)
 
-            # ---------- 颜色/尺寸 from 规格属性 ----------
-            颜色编码, 尺寸编码 = split_color_size(spec)
-
-            # ---------- 图片编码 source (YOUR REQUEST) ----------
-            # Try 商家编码 first; if empty -> straight use SKCID
-            if has_merchant_col and is_nonempty(row.get("商家编码")):
-                img_source = str(row.get("商家编码")).strip()
-            else:
-                img_source = skcid
-
+            # ✅ 图片编码 source: 商家编码 first, if EMPTY then SKCID
+            img_source = pick_source(row, "商家编码", "SKCID")
             图片编码 = extract_image_code(img_source)
 
-            # Write into Excel (row 2 corresponds to df index 0)
-            excel_row = index + 2
+            excel_row = index + 2  # header row = 1
+
             sheet.cell(excel_row, col_style, 款号编码)
             sheet.cell(excel_row, col_color, 颜色编码)
             sheet.cell(excel_row, col_size,  尺寸编码)
@@ -158,7 +162,7 @@ if uploaded_file is not None:
         workbook.save(buffer)
         buffer.seek(0)
 
-        st.success("Done — 图片编码 now prefers 商家编码, otherwise falls back to SKCID.")
+        st.success("Done — 款号编码 is now A + one digit; 图片编码 prefers 商家编码 then SKCID.")
 
         st.download_button(
             "Download Processed Spreadsheet",

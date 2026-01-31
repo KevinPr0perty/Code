@@ -25,7 +25,6 @@ def is_nonempty(x):
     if x is None:
         return False
     try:
-        # pandas NaN
         if pd.isna(x):
             return False
     except Exception:
@@ -72,6 +71,7 @@ def extract_style_code(source_id):
     Examples:
       A2-20250703381-Navy-XL -> A2
       A8250523149R          -> A8
+      A8-2025001-B           -> A8
     """
     s = str(source_id).strip()
     m = re.search(r"A(\d)", s)
@@ -80,26 +80,22 @@ def extract_style_code(source_id):
 
 def extract_image_code(source_id):
     """
-    图片编码:
-      A2-20250703381-Navy-XL -> 20250703381
-      A8250523149R          -> 8250523149
+    图片编码 rules (your latest):
+      - If matches A{digit(s)}-{digits}... -> return digits after first dash
+        A8-2025001       -> 2025001
+        A8-2025001-B     -> 2025001
+        A2-20250703381-...-> 20250703381
+      - Else (no dash pattern) -> return FULL original string
+        A8250523149R     -> A8250523149R
     """
     s = str(source_id).strip()
 
-    # A{digit(s)}-{digits}...
+    # Digits right after first dash (most important rule)
     m = re.match(r"^A\d+-(\d+)", s)
     if m:
         return m.group(1)
 
-    # first long digit group
-    m2 = re.search(r"\d{6,}", s)
-    if m2:
-        return m2.group(0)
-
-    # fallback: before first dash
-    if "-" in s:
-        return s.split("-", 1)[0]
-
+    # Otherwise keep the full string (do NOT strip to digits)
     return s
 
 
@@ -107,7 +103,7 @@ def extract_image_code(source_id):
 
 if uploaded_file is not None:
     try:
-        # Load workbook for writing
+        # Load workbook for writing (keeps formatting better)
         workbook = openpyxl.load_workbook(uploaded_file)
         sheet = workbook.active
 
@@ -123,7 +119,7 @@ if uploaded_file is not None:
             st.error("Uploaded file must contain '规格属性' and 'SKCID' columns.")
             st.stop()
 
-        # Map headers in the Excel sheet (prevents wrong column letters)
+        # Map headers in the Excel sheet (prevents column shifting)
         header_map = get_header_map(sheet, header_row=1)
 
         target_headers = ["*款号编码", "*颜色编码", "*尺寸编码", "*图片编码", "*工艺类型"]
@@ -142,13 +138,14 @@ if uploaded_file is not None:
             # 颜色/尺寸 from 规格属性
             颜色编码, 尺寸编码 = split_color_size(row.get("规格属性"))
 
-            # ✅ 款号编码 source: 商家编码 first, else SKCID
-            style_source = pick_source(row, "商家编码", "SKCID")
-            款号编码 = extract_style_code(style_source)
+            # ✅ Prefer 商家编码; if empty -> SKCID
+            source_id = pick_source(row, "商家编码", "SKCID")
 
-            # ✅ 图片编码 source: 商家编码 first, if EMPTY then SKCID
-            img_source = pick_source(row, "商家编码", "SKCID")
-            图片编码 = extract_image_code(img_source)
+            # 款号编码 (A + one digit)
+            款号编码 = extract_style_code(source_id)
+
+            # 图片编码 (your new rule)
+            图片编码 = extract_image_code(source_id)
 
             excel_row = index + 2  # header row = 1
 
@@ -162,7 +159,7 @@ if uploaded_file is not None:
         workbook.save(buffer)
         buffer.seek(0)
 
-        st.success("Done — 款号编码 is now A + one digit; 图片编码 prefers 商家编码 then SKCID.")
+        st.success("Done — 图片编码 now keeps full 商家编码 unless it matches A?-<digits>…")
 
         st.download_button(
             "Download Processed Spreadsheet",
